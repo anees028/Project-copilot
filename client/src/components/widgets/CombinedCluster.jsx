@@ -252,13 +252,14 @@ export const CombinedCluster = ({
         </defs>
 
         {/* --- BACKGROUND SHAPE (The "Dashboard" Housing) --- */}
-        <path
-          d="M 100,350 Q 220,100 400,100 Q 550,100 800,350"
+        {/* <path
+          d="M 100,350 Q 220,100 400,300 Q 550,100 800,350"
           fill="none"
-          stroke="#1e293b"
+          stroke="#f6f6f6ff"
           strokeWidth="2"
           opacity="0.5"
-        />
+        /> */}
+        
 
         {/* ========================================= */}
         {/* LEFT: RPM GAUGE */}
