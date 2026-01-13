@@ -4,4 +4,12 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['react-grid-layout', 'react-resizable']
+  },
+  build: {
+    commonjsOptions: {
+      include: [/react-grid-layout/, /react-resizable/, /node_modules/]
+    }
+  }
 })
