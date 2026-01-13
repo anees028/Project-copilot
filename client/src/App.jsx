@@ -1,107 +1,205 @@
 import React, { useEffect, useState } from 'react';
 import io from 'socket.io-client';
+import { Music, Map, Zap, Gauge, Lock, Move, GripVertical } from 'lucide-react';
 
-// Connect to the "Car"
+// Modern Drag & Drop Libraries
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+// Components
+import { WidgetCard } from './components/WidgetCard';
+import { SpeedWidget } from './components/widgets/SpeedWidget';
+import { RpmWidget } from './components/widgets/RpmWidget';
+
 const socket = io.connect("http://localhost:3001");
 
-function App() {
-  const [carData, setCarData] = useState({ speed: 0, rpm: 0, gear: 'P', temp: 90 });
+// --- SORTABLE WIDGET WRAPPER ---
+// This wrapper makes any div draggable
+function SortableItem(props) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: props.id, disabled: props.disabled });
   
-  // DRIVER EXPERIENCE LOGIC
-  // We calculate "Density" based on speed.
-  // 0-10 km/h: "PARKED" (High interaction allowed)
-  // 10-80 km/h: "CITY" (Medium interaction)
-  // 80+ km/h: "HIGHWAY" (Low interaction - Safety Mode)
-  
-  let driverMode = 'PARKED';
-  if (carData.speed > 10) driverMode = 'CITY';
-  if (carData.speed > 80) driverMode = 'HIGHWAY';
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 50 : 'auto', // Bring to front when dragging
+    gridColumn: props.span, // Preserve grid span
+    gridRow: props.rowSpan,
+  };
 
+  return (
+    <div ref={setNodeRef} style={style} className={`relative ${props.className}`}>
+       {/* Drag Handle (Only visible when editing) */}
+       {!props.disabled && (
+         <div {...attributes} {...listeners} className="absolute top-2 right-2 z-50 cursor-grab p-1 bg-white/10 rounded-md hover:bg-white/20">
+            <GripVertical size={14} className="text-white/70" />
+         </div>
+       )}
+       {props.children}
+    </div>
+  );
+}
+
+// --- MAIN APP ---
+function App() {
+  const [carData, setCarData] = useState({ speed: 0, rpm: 0, gear: 'P', temp: 90, fuel: 75 });
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // Widget Order State (We move these IDs around)
+  const [items, setItems] = useState(['speed', 'rpm', 'map', 'media', 'status']);
+
+  // CAR DATA LISTENER
   useEffect(() => {
     socket.on("car_signal", (data) => {
       setCarData(data);
+      // Safety: Auto-exit edit mode if moving
+      if (data.speed > 30 && isEditing) setIsEditing(false);
     });
-    
-    // Cleanup on unmount
     return () => socket.off("car_signal");
-  }, []);
+  }, [isEditing]);
+
+  // DRAG AND DROP SENSORS
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (active.id !== over.id) {
+      setItems((items) => {
+        const oldIndex = items.indexOf(active.id);
+        const newIndex = items.indexOf(over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
+  const isHighway = carData.speed > 80;
+  const isParked = carData.speed < 30;
+
+  // Render Logic: We map the ID to the actual Component
+  const renderWidget = (id) => {
+    switch(id) {
+      case 'speed':
+        return (
+          <WidgetCard title="Telemetry" icon={Gauge} className={isHighway ? 'border-red-900/50' : ''}>
+            <SpeedWidget speed={carData.speed} rpm={carData.rpm} />
+          </WidgetCard>
+        );
+      case 'rpm':
+        return (
+          <WidgetCard title="Engine" icon={Zap} className="border-l-4 border-l-yellow-500/20">
+             <RpmWidget rpm={carData.rpm} />
+          </WidgetCard>
+        );
+      case 'map':
+        // Hide map on highway
+        if (isHighway) return null;
+        return (
+          <WidgetCard title="Navigation" icon={Map} className="bg-slate-800">
+             <div className="w-full h-full bg-slate-800/50 flex items-center justify-center rounded-xl relative overflow-hidden">
+               <div className="absolute inset-0 opacity-20" style={{backgroundImage: 'radial-gradient(#60a5fa 1px, transparent 1px)', backgroundSize: '30px 30px'}}></div>
+               <div className="text-center z-10">
+                 <div className="text-3xl">↱</div>
+                 <div className="font-bold">200m</div>
+               </div>
+             </div>
+          </WidgetCard>
+        );
+      case 'media':
+        if (isHighway) return null;
+        return (
+           <WidgetCard title="Media" icon={Music}>
+               <div className="flex items-center gap-4 h-full">
+                 <div className="w-12 h-12 bg-purple-500 rounded-lg shadow-lg"></div>
+                 <div>
+                   <div className="font-bold text-sm">Blinding Lights</div>
+                   <div className="text-xs text-slate-400">The Weeknd</div>
+                 </div>
+               </div>
+            </WidgetCard>
+        );
+      case 'status':
+        return (
+            <WidgetCard title="Status" icon={Zap}>
+              <div className="grid grid-cols-3 gap-2 h-full items-center text-center">
+                 <div><div className="text-xl font-mono text-emerald-400">{carData.temp}°</div><div className="text-[10px] text-slate-500">TEMP</div></div>
+                 <div><div className="text-xl font-mono text-blue-400">{carData.fuel}%</div><div className="text-[10px] text-slate-500">FUEL</div></div>
+                 <div><div className="text-xl font-mono text-slate-200">P</div><div className="text-[10px] text-slate-500">GEAR</div></div>
+              </div>
+            </WidgetCard>
+        );
+      default: return null;
+    }
+  };
+
+  // Grid Span Logic (Visual Sizing)
+  // We define how big each widget should be in the CSS Grid
+  const getSpan = (id) => {
+    if (isHighway && id === 'speed') return { col: 'span 12', row: 'span 6' };
+    if (isHighway && id === 'rpm') return { col: 'span 4', row: 'span 6' };
+    if (id === 'speed') return { col: 'span 4', row: 'span 4' };
+    if (id === 'rpm') return { col: 'span 3', row: 'span 3' };
+    if (id === 'map') return { col: 'span 5', row: 'span 4' };
+    if (id === 'media') return { col: 'span 3', row: 'span 2' };
+    if (id === 'status') return { col: 'span 3', row: 'span 2' };
+    return { col: 'span 3', row: 'span 2' };
+  };
 
   return (
-    // The Main Dashboard Container
-    // We change the background color subtly based on mode to signal the driver
-    <div className={`w-screen h-screen flex flex-col text-white transition-colors duration-1000
-      ${driverMode === 'HIGHWAY' ? 'bg-black' : 'bg-slate-900'}
-    `}>
+    <div className={`w-screen h-screen overflow-hidden flex flex-col transition-colors duration-1000 ${isHighway ? 'bg-black' : 'bg-slate-950'} text-white`}>
       
-      {/* HEADER: Always Visible, but simplifies on Highway */}
-      <header className="p-6 flex justify-between items-center border-b border-slate-800">
-        <div className="text-xl font-bold tracking-widest text-blue-400">VW-OS</div>
-        <div className="text-sm text-slate-400">
-           {/* Clock logic would go here */}
-           12:45 PM
+      {/* HEADER */}
+      <header className="h-16 px-8 flex items-center justify-between bg-slate-900/50 z-50 border-b border-white/5">
+        <div className="flex items-center gap-4">
+          <Zap className="text-yellow-400 fill-current" />
+          <span className="font-bold text-xl tracking-widest font-mono">CO-PILOT</span>
+        </div>
+        <div className="flex items-center gap-4">
+           {/* EDIT BUTTON */}
+           <button 
+             onClick={() => isParked && setIsEditing(!isEditing)}
+             disabled={!isParked}
+             className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-2
+               ${isEditing ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.5)]' : 'bg-slate-800 text-slate-400'}
+               ${!isParked && 'opacity-30 cursor-not-allowed'}
+             `}
+           >
+             {isEditing ? 'DONE' : 'CUSTOMIZE'}
+             {isParked ? <Move size={12}/> : <Lock size={12}/>}
+           </button>
         </div>
       </header>
 
-      {/* MAIN CONTENT GRID */}
-      <main className="flex-1 grid grid-cols-12 gap-4 p-6">
-        
-        {/* LEFT PANEL: SPEEDOMETER (Expands when driving fast) */}
-        <section className={`
-          flex flex-col justify-center items-center rounded-2xl bg-slate-800 transition-all duration-500
-          ${driverMode === 'HIGHWAY' ? 'col-span-12 scale-110' : 'col-span-4'}
-        `}>
-          <div className="text-slate-400 text-sm uppercase tracking-widest">Speed</div>
-          <div className={`font-black transition-all duration-300 ${driverMode === 'HIGHWAY' ? 'text-9xl text-red-500' : 'text-7xl'}`}>
-            {Math.floor(carData.speed)}
-          </div>
-          <div className="text-xl text-slate-500">km/h</div>
-          
-          {/* Gear Indicator */}
-          <div className="mt-4 px-4 py-2 bg-black rounded-lg text-2xl font-mono text-yellow-500">
-            {carData.gear}
-          </div>
-        </section>
+      {/* DRAGGABLE GRID */}
+      <main className="flex-1 p-6">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={items} strategy={rectSortingStrategy}>
+            
+            <div className="grid grid-cols-12 grid-rows-6 gap-6 h-full w-full">
+              {items.map((id) => {
+                const spans = getSpan(id);
+                // If on Highway, hide non-essential widgets entirely
+                if (isHighway && id !== 'speed' && id !== 'status') return null;
 
-        {/* CENTER PANEL: MEDIA / MAPS */}
-        {/* THIS IS THE KEY FIX: If we are on Highway, this DISAPPEARS to reduce distraction */}
-        {driverMode !== 'HIGHWAY' && (
-          <section className="col-span-4 bg-slate-800 rounded-2xl p-6 flex flex-col items-center justify-center opacity-100 transition-opacity duration-500">
-             <div className="w-32 h-32 bg-slate-700 rounded-full mb-4 animate-pulse"></div>
-             <h2 className="text-xl font-bold">Spotify</h2>
-             <p className="text-slate-400">Playing current track...</p>
-             
-             {/* Complex buttons only visible in PARKED mode */}
-             {driverMode === 'PARKED' && (
-               <div className="mt-6 flex gap-4">
-                 <button className="px-6 py-2 bg-blue-600 rounded-full">Browse</button>
-                 <button className="px-6 py-2 bg-slate-600 rounded-full">Settings</button>
-               </div>
-             )}
-          </section>
-        )}
-
-        {/* RIGHT PANEL: CAR STATUS (Tire pressure, etc) */}
-        {/* Also hides on Highway */}
-        {driverMode !== 'HIGHWAY' && (
-          <section className="col-span-4 bg-slate-800 rounded-2xl p-6">
-            <h3 className="text-lg font-bold mb-4 text-slate-300">Vehicle Status</h3>
-            <div className="space-y-4">
-              <div className="flex justify-between border-b border-slate-700 pb-2">
-                <span>RPM</span>
-                <span className="font-mono text-blue-400">{Math.floor(carData.rpm)}</span>
-              </div>
-              <div className="flex justify-between border-b border-slate-700 pb-2">
-                <span>Temp</span>
-                <span className="font-mono text-green-400">{carData.temp}°C</span>
-              </div>
-              <div className="flex justify-between border-b border-slate-700 pb-2">
-                <span>Fuel</span>
-                <span className="font-mono">{carData.fuel}%</span>
-              </div>
+                return (
+                  <SortableItem 
+                    key={id} 
+                    id={id} 
+                    disabled={!isEditing}
+                    span={spans.col}
+                    rowSpan={spans.row}
+                    className={`bg-slate-900/40 rounded-3xl transition-all duration-500 ${spans.col} ${spans.row}`}
+                  >
+                    {renderWidget(id)}
+                  </SortableItem>
+                );
+              })}
             </div>
-          </section>
-        )}
-        
+
+          </SortableContext>
+        </DndContext>
       </main>
     </div>
   );
